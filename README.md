@@ -1,4 +1,4 @@
-# GLM Flash Rust
+# GLM 5.3 Flash, across 4x DGX Spark, from scratch in Rust
 
 https://github.com/user-attachments/assets/114d3a6c-f79d-4f43-8f11-9a40429200e0
 
