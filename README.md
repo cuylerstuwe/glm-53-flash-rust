@@ -4,7 +4,7 @@ https://github.com/user-attachments/assets/114d3a6c-f79d-4f43-8f11-9a40429200e0
 
 # About
 
-GLM Flash RS is a Rust inference service for **GLM 5.3 Flash on a four-node NVIDIA GB10 cluster**.
+This is a Rust inference service for **GLM 5.3 Flash on a four-node NVIDIA GB10 cluster**.
 
 The opinionated recipe selects a balanced position on the speed/quality curve that **errs on the side of QUALITY**.
 
