@@ -1,4 +1,4 @@
-# GLM Flash RS
+# GLM Flash Rust
 
 https://github.com/user-attachments/assets/114d3a6c-f79d-4f43-8f11-9a40429200e0
 
