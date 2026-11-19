@@ -32,33 +32,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glm-flash-rs"
-version = "0.1.0"
-dependencies = [
- "aho-corasick",
- "anyhow",
- "base64 0.22.1",
- "blake2",
- "fancy-regex",
- "gif",
- "half",
- "httparse",
- "idna",
- "libc",
- "libloading",
- "minijinja",
- "png",
- "regex-syntax",
- "rustls",
- "ryu",
- "serde",
- "serde_json",
- "sha2",
- "tokenizers",
- "ureq",
-]
-
-[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -450,6 +423,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee8cfcc411d9adbbaba82fb72661cc1bcca13e8bba98b364e62b2dba8f960159"
 dependencies = [
  "weezl",
+]
+
+[[package]]
+name = "glm-flash-rs"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "anyhow",
+ "base64 0.22.1",
+ "blake2",
+ "fancy-regex",
+ "gif",
+ "half",
+ "httparse",
+ "idna",
+ "libc",
+ "libloading",
+ "minijinja",
+ "png",
+ "regex-syntax",
+ "rustls",
+ "ryu",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokenizers",
+ "ureq",
 ]
 
 [[package]]
