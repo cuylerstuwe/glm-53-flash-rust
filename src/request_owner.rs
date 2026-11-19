@@ -104,13 +104,14 @@ impl Scheduler {
                 if !report.batch_output.is_empty() {
                     for &(id, emitted, reason) in &report.batch_output {
                         let outputs = if reason.is_some() {
-                            &self
+                            let completed = self
                                 .queue
                                 .completed
                                 .iter()
                                 .find(|c| c.status.id == id)
-                                .context("multi completed owner")?
-                                .outputs
+                                .context("multi completed owner")?;
+                            owner.completed_timing(id, completed.status.prefill_active_ns)?;
+                            &completed.outputs
                         } else {
                             &self.queue.request(id)?.outputs
                         };
@@ -130,6 +131,7 @@ impl Scheduler {
                         .iter()
                         .find(|c| c.status.id == id)
                         .context("missing completed owner")?;
+                    owner.completed_timing(id, c.status.prefill_active_ns)?;
                     owner.publish_many(
                         id,
                         if report.worked == Some(id) {

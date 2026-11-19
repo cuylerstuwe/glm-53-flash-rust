@@ -565,3 +565,24 @@ fn grammar_failure_has_no_native_request_identity_and_does_not_break_next_client
     assert_eq!(d.submitted(Duration::ZERO)?, 99);
     Ok(())
 }
+
+#[test]
+fn completion_timing_survives_publication_and_is_request_local() -> Result<()> {
+    let (b, o) = Broker::new();
+    let c = b.begin(false, Duration::from_secs(10))?;
+    prepare(&o)?;
+    c.submit(vec![1].into(), 64)?;
+    submit(&o)?;
+    assert_eq!(c.completion_usage()?, (0, None));
+    o.cached(99, 32)?;
+    o.completed_timing(99, 500_000_000)?;
+    o.publish_many(99, &[7, 8], Some(End::Complete))?;
+    assert_eq!(c.completion_usage()?, (32, Some(500_000_000)));
+    assert_eq!(c.receive(Duration::ZERO)?, Some(Event::Token(7)));
+    assert_eq!(c.receive(Duration::ZERO)?, Some(Event::Token(8)));
+    assert_eq!(c.receive(Duration::ZERO)?, Some(Event::End(End::Complete)));
+    assert!(o.completed_timing(99, 1).is_err());
+    let other = b.begin(true, Duration::from_secs(10))?;
+    assert_eq!(other.completion_usage()?, (0, None));
+    Ok(())
+}

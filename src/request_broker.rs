@@ -112,6 +112,7 @@ struct Entry {
     receipt: Option<Receipt>,
     timed_out: bool,
     cached_tokens: usize,
+    prefill_active_ns: Option<u128>,
     /// Rank 0's image rows for this request's prompt, if it has images.
     vision: Option<Arc<crate::vision_service::Table>>,
     image_preparation: Option<Arc<crate::vision_request::Control>>,
@@ -292,6 +293,7 @@ impl Broker {
                 receipt: None,
                 timed_out: false,
                 cached_tokens: 0,
+                prefill_active_ns: None,
                 vision: None,
                 image_preparation: None,
             },
@@ -513,17 +515,10 @@ impl Client {
             s = self.broker.shared.changed.wait_timeout(s, wait).unwrap().0;
         }
     }
-    pub fn cached_tokens(&self) -> Result<usize> {
-        Ok(self
-            .broker
-            .shared
-            .state
-            .lock()
-            .unwrap()
-            .entries
-            .get(&self.id)
-            .context("retired client")?
-            .cached_tokens)
+    pub fn completion_usage(&self) -> Result<(usize, Option<u128>)> {
+        let state = self.broker.shared.state.lock().unwrap();
+        let entry = state.entries.get(&self.id).context("retired client")?;
+        Ok((entry.cached_tokens, entry.prefill_active_ns))
     }
 }
 impl Drop for Client {
@@ -868,6 +863,18 @@ impl Owner {
             e.phase = Phase::Retired;
         }
         self.broker.shared.changed.notify_all();
+        Ok(())
+    }
+    /// Copy existing completed-request accounting once, before publishing End.
+    /// No clock reads, GPU calls, or changes to scheduler accounting.
+    pub fn completed_timing(&self, request: u64, prefill_active_ns: u128) -> Result<()> {
+        let mut state = self.broker.shared.state.lock().unwrap();
+        let entry = state
+            .entries
+            .values_mut()
+            .find(|entry| entry.request == Some(request))
+            .context("unowned completion timing")?;
+        entry.prefill_active_ns = Some(prefill_active_ns);
         Ok(())
     }
     pub fn cached(&self, request: u64, tokens: usize) -> Result<()> {

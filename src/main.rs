@@ -41,6 +41,7 @@ mod http_numbers;
 mod http_probe;
 mod http_sampling_probe;
 mod http_transport;
+mod image_embedding_cache;
 mod image_gate;
 mod index_projection;
 mod indexer;

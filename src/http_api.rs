@@ -942,6 +942,7 @@ fn handle(socket: &mut TcpStream, s: &ContextState, id: u64) -> Result<()> {
         }
     };
     let usage = json!({"prompt_tokens":prompt,"completion_tokens":reply["completion_tokens"],"total_tokens":prompt+reply["completion_tokens"].as_u64().unwrap() as usize,"prompt_tokens_details":{"cached_tokens":reply["cached_tokens"]}});
+    let timings = prefill_timings(prompt, &reply);
     let mut stats = json!({"engine":"alaska-rust-experimental","incarnation":s.shared.incarnation,"request_id":external,"native_request_id":native,"mode":if background{"background"}else{"foreground"},"cached":reply["cached_tokens"],"cpu_reused_prompt_tokens":token_cache});
     if return_token_ids {
         stats["token_ids"] = reply["token_ids"].clone();
@@ -984,6 +985,9 @@ fn handle(socket: &mut TcpStream, s: &ContextState, id: u64) -> Result<()> {
         if include_usage {
             end["usage"] = usage;
         }
+        if let Some(timings) = timings {
+            end["timings"] = timings;
+        }
         end["tensorfold"] = stats;
         net::event(socket, &end)?;
         socket.write_all(b"data: [DONE]\n\n")?;
@@ -991,7 +995,7 @@ fn handle(socket: &mut TcpStream, s: &ContextState, id: u64) -> Result<()> {
         net::json(
             socket,
             200,
-            &json!({"id":rid,"object":"text_completion","created":created,"model":s.config.served,"choices":[{"index":0,"text":reply["content"],"finish_reason":reply["finish"]}],"usage":usage,"tensorfold":stats}),
+            &json!({"id":rid,"object":"text_completion","created":created,"model":s.config.served,"choices":[{"index":0,"text":reply["content"],"finish_reason":reply["finish"]}],"usage":usage,"tensorfold":stats,"timings":timings}),
         )?;
     } else {
         let mut message = json!({"role":"assistant","content":if reply["content"]==""{Value::Null}else{reply["content"].clone()}});
@@ -1004,7 +1008,7 @@ fn handle(socket: &mut TcpStream, s: &ContextState, id: u64) -> Result<()> {
         net::json(
             socket,
             200,
-            &json!({"id":rid,"object":"chat.completion","created":created,"model":s.config.served,"choices":[{"index":0,"message":message,"finish_reason":reply["finish"]}],"usage":usage,"tensorfold":stats}),
+            &json!({"id":rid,"object":"chat.completion","created":created,"model":s.config.served,"choices":[{"index":0,"message":message,"finish_reason":reply["finish"]}],"usage":usage,"tensorfold":stats,"timings":timings}),
         )?;
     }
     Ok(())
@@ -1174,5 +1178,41 @@ mod tests {
         assert!(a.bytes().all(|b| b.is_ascii_hexdigit()));
         assert_ne!(a, b);
         Ok(())
+    }
+}
+
+/// Existing native active-phase accounting excludes queue/hold/restore time,
+/// but includes sampling and attached snapshot work. It is not kernel timing.
+fn prefill_timings(prompt: usize, reply: &Value) -> Option<Value> {
+    let cached = usize::try_from(reply["cached_tokens"].as_u64()?).ok()?;
+    let processed = prompt.checked_sub(cached)?;
+    let ns = reply["prefill_active_ns"].as_f64()?;
+    if processed == 0 || !ns.is_finite() || ns <= 0.0 {
+        return None;
+    }
+    let seconds = ns / 1e9;
+    Some(json!({"prompt_n":processed,"prompt_ms":seconds*1000.0,
+        "prompt_per_second":processed as f64 / seconds,"cache_n":cached,
+        "scope":"server_prefill_active"}))
+}
+#[cfg(test)]
+mod prefill_timing_tests {
+    use super::*;
+    #[test]
+    fn prefill_rate_uses_completed_active_work_and_uncached_tokens() {
+        let reply = json!({"cached_tokens":9000,"prefill_active_ns":500_000_000u64});
+        let t = prefill_timings(10000, &reply).unwrap();
+        assert_eq!(t["prompt_n"], 1000);
+        assert_eq!(t["prompt_ms"], 500.0);
+        assert_eq!(t["prompt_per_second"], 2000.0);
+        assert_eq!(t["scope"], "server_prefill_active");
+        for r in [
+            json!({}),
+            json!({"cached_tokens":10001,"prefill_active_ns":1}),
+            json!({"cached_tokens":10000,"prefill_active_ns":1}),
+            json!({"cached_tokens":0,"prefill_active_ns":0}),
+        ] {
+            assert!(prefill_timings(10000, &r).is_none());
+        }
     }
 }

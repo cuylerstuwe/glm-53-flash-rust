@@ -57,7 +57,11 @@ pub(crate) fn consume(
                     .lock()
                     .map_err(|_| anyhow::anyhow!("preparation owner failed"))?
                     .finish_output(stream, body, ids)?;
-                reply["cached_tokens"] = serde_json::json!(client.cached_tokens()?);
+                let (cached, prefill_ns) = client.completion_usage()?;
+                reply["cached_tokens"] = serde_json::json!(cached);
+                if let Some(ns) = prefill_ns {
+                    reply["prefill_active_ns"] = serde_json::json!(ns);
+                }
                 return Ok(reply);
             }
             Some(Event::End(reason)) => bail!("native request ended without success: {reason:?}"),

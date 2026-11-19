@@ -3,6 +3,7 @@
 //! (`vision-serve`). The model owner sends each encoded image over a Unix socket
 //! and keeps the prompt, virtual IDs and embedding rows.
 use crate::{
+    image_embedding_cache::{self, Cache, Embedding},
     vision_codecs::Codecs,
     vision_decode::{self, Decoded, MAX_ENCODED_BYTES},
     vision_gif,
@@ -157,15 +158,52 @@ pub(crate) fn serve(socket: &Path, config: &Path) -> Result<()> {
     let codecs = Codecs::load(&json_file(Path::new(text("codecs")?))?)?;
     let native = Native::open(Path::new(text("library")?), text("library_sha256")?)?;
     let tower = Tower::load(native, &model.join("vision.safetensors"))?;
+    let cache_bytes = match c.get("image_cache_bytes") {
+        None => image_embedding_cache::MAX_BYTES,
+        Some(value) => usize::try_from(value.as_u64().context("image_cache_bytes")?)?,
+    };
+    ensure!(
+        cache_bytes <= image_embedding_cache::MAX_BYTES,
+        "image cache byte bound"
+    );
+    let mut cache = Cache::new(cache_bytes);
     let _ = std::fs::remove_file(socket);
     let listener = UnixListener::bind(socket)?;
     eprintln!("vision encoder ready");
     for stream in listener.incoming() {
         let mut stream = stream?;
         stream.set_read_timeout(Some(Duration::from_secs(60)))?;
-        let prepared = (|| -> Result<(Option<Prepared>, usize)> {
+        let request = (|| -> Result<_> {
             let (_, header, bytes) = receive(&mut stream, MAX_ENCODED_BYTES)?;
             let max_tokens = header["max_tokens"].as_u64().context("max_tokens")? as usize;
+            Ok((header, bytes, max_tokens))
+        })();
+        let (header, bytes, max_tokens) = match request {
+            Ok(request) => request,
+            Err(error) => {
+                let _ = send(&mut stream, 1, &json!({"error": error.to_string()}), &[]);
+                continue;
+            }
+        };
+        let cache_key = image_embedding_cache::key(&bytes, max_tokens);
+        if let Some(image) = cache.get(&cache_key) {
+            if header["operation"] == "count" {
+                let _ = send(
+                    &mut stream,
+                    0,
+                    &json!({"tokens":image.tokens,"bytes":0,"cache_hit":true}),
+                    &[],
+                );
+            } else {
+                let key: String = image.image_key.iter().map(|b| format!("{b:02x}")).collect();
+                let header = json!({"key":key,"tokens":image.tokens,"bytes":image.rows.len(),"cache_hit":true});
+                if let Err(error) = send(&mut stream, 0, &header, &image.rows) {
+                    eprintln!("vision reply failed: {error}");
+                }
+            }
+            continue;
+        }
+        let prepared = (|| -> Result<(Option<Prepared>, usize)> {
             let decoded = decode(&bytes, &codecs)?;
             let plan = Plan::new(decoded.height, decoded.width, max_tokens)?;
             let pixels = if header["operation"] == "count" {
@@ -183,7 +221,12 @@ pub(crate) fn serve(socket: &Path, config: &Path) -> Result<()> {
             }
         };
         let Some(prepared) = prepared else {
-            let _ = send(&mut stream, 0, &json!({"tokens":tokens,"bytes":0}), &[]);
+            let _ = send(
+                &mut stream,
+                0,
+                &json!({"tokens":tokens,"bytes":0,"cache_hit":false}),
+                &[],
+            );
             continue;
         };
         let rows = (|| -> Result<Vec<u8>> {
@@ -197,14 +240,17 @@ pub(crate) fn serve(socket: &Path, config: &Path) -> Result<()> {
         })();
         match rows {
             Ok(rows) => {
-                let key: String = prepared
-                    .key()
-                    .0
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect();
-                let header = json!({"key": key, "tokens": tokens, "bytes": rows.len()});
-                if let Err(error) = send(&mut stream, 0, &header, &rows) {
+                let image = cache.insert(
+                    cache_key,
+                    Embedding {
+                        image_key: prepared.key().0,
+                        tokens,
+                        rows,
+                    },
+                );
+                let key: String = image.image_key.iter().map(|b| format!("{b:02x}")).collect();
+                let header = json!({"key": key, "tokens": tokens, "bytes": image.rows.len(), "cache_hit":false});
+                if let Err(error) = send(&mut stream, 0, &header, &image.rows) {
                     eprintln!("vision reply failed: {error}");
                 }
             }
